@@ -19,61 +19,79 @@ st.set_page_config(
 
 
 # --------------------------------------------------
-# BASIC STYLING
+# SHARED THEME
 # --------------------------------------------------
 
-st.markdown("""
-<style>
-.stApp {
-    background: #0b1120;
-    color: #f1f5f9;
-}
-[data-testid="stSidebar"] {
-    background: #111c30;
-}
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 2rem;
-}
-[data-testid="stMetric"] {
-    background: #152238;
-    padding: 20px;
-    border-radius: 14px;
-    border: 1px solid #263954;
-}
-div.stButton > button {
-    background: #6366f1;
-    color: white;
-    border: none;
-    border-radius: 9px;
-    padding: 0.55rem 1rem;
-}
-div.stButton > button:hover {
-    background: #4f46e5;
-    color: white;
-}
-</style>
-""", unsafe_allow_html=True)
+from ui_theme import apply_theme
+
+apply_theme()
 
 
 # --------------------------------------------------
 # SIDEBAR NAVIGATION
 # --------------------------------------------------
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sfm-brand">
+            <div class="sfm-brand-mark"><span>SF</span></div>
+            <div class="sfm-brand-copy">
+                <div class="sfm-brand-title">SMART FILE</div>
+                <div class="sfm-brand-title sfm-brand-title-second">MANAGER</div>
+                <div class="sfm-brand-subtitle">FILE INTELLIGENCE</div>
+            </div>
+        </div>
+        <div class="sfm-workspace-label">WORKSPACE</div>
+        <div class="sfm-sidebar-description">Navigate your files and database tools.</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.sidebar.markdown("# 📁 Smart File Manager")
-st.sidebar.caption("OS + DBMS Project")
-st.sidebar.divider()
+    page_labels = {
+        "Dashboard": "01   Overview",
+        "Scan Files": "02   Scan files",
+        "Database Records": "03   Database records",
+        "About": "04   About project",
+    }
+    page = st.radio(
+        "Navigation",
+        ["Dashboard", "Scan Files", "Database Records", "About"],
+        format_func=lambda item: page_labels[item],
+        label_visibility="collapsed",
+        key="main_navigation",
+    )
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["Dashboard", "Scan Files", "Database Records", "About"]
-)
+    st.markdown(
+        """
+        <div class="sfm-sidebar-spacer"></div>
+        <div class="sfm-sidebar-system-card">
+            <div class="sfm-system-card-top"><span class="sfm-connection-dot"></span><span>WORKSPACE STATUS</span></div>
+            <div class="sfm-system-card-title">Local environment</div>
+            <div class="sfm-system-card-copy">Your files stay on your machine.</div>
+            <div class="sfm-system-card-footer">PYTHON <span></span> STREAMLIT <span></span> POSTGRESQL</div>
+        </div>
+        <div class="sfm-sidebar-version">SMART FILE MANAGER <span>•</span> LOCAL APP</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.sidebar.divider()
-st.sidebar.caption("Built with Python, Streamlit & PostgreSQL")
-
-st.title("📁 Smart File Manager")
-st.write("Scan, organize and manage file metadata from one dashboard.")
+# --------------------------------------------------
+# APPLICATION HEADER
+# --------------------------------------------------
+header_left, header_right = st.columns([5, 1.3], vertical_alignment="center")
+with header_left:
+    st.markdown('<div class="sfm-eyebrow">WORKSPACE / FILE INTELLIGENCE</div>', unsafe_allow_html=True)
+    st.title("Smart File Manager")
+    st.markdown(
+        '<div class="sfm-page-subtitle">A clear view of your scanned files, metadata, and database activity.</div>',
+        unsafe_allow_html=True,
+    )
+with header_right:
+    st.markdown(
+        '<div class="sfm-status-pill"><span class="sfm-status-dot"></span> LOCAL WORKSPACE</div>',
+        unsafe_allow_html=True,
+    )
+st.markdown('<div class="sfm-header-rule"></div>', unsafe_allow_html=True)
 
 
 # --------------------------------------------------
@@ -82,7 +100,9 @@ st.write("Scan, organize and manage file metadata from one dashboard.")
 
 if page == "Dashboard":
 
-    st.subheader("Dashboard Overview")
+    st.markdown('<div class="sfm-section-kicker">OVERVIEW</div>', unsafe_allow_html=True)
+    st.subheader("Workspace overview")
+    st.markdown('<div class="sfm-muted-copy">Inspect a folder to calculate file statistics and preview the latest scan results.</div>', unsafe_allow_html=True)
 
     folder_path = st.text_input(
         "Folder to inspect",
@@ -90,7 +110,7 @@ if page == "Dashboard":
         key="dashboard_folder"
     )
 
-    if st.button("🔍 Inspect Folder"):
+    if st.button("Inspect folder", type="primary"):
 
         if os.path.isdir(folder_path):
 
@@ -109,21 +129,20 @@ if page == "Dashboard":
     total_size = sum(item["file_size"] for item in files)
     total_mb = total_size / (1024 * 1024)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Files Found", total_files)
-    col2.metric("Total Size", f"{total_mb:.2f} MB")
-
+    col1.metric("Files found", f"{total_files:,}")
+    col2.metric("Total size", f"{total_mb:.2f} MB")
     col3.metric(
-        "File Types",
+        "File types",
         len(set(
             item["file_extension"] or "No extension"
             for item in files
         ))
     )
+    col4.metric("Scan state", "Ready" if files else "Waiting")
 
-    st.divider()
-    st.subheader("Recent Scan Results")
+    st.markdown('<div class="sfm-section-heading-row"><div><div class="sfm-section-kicker">LATEST ACTIVITY</div><h3>Recent scan results</h3></div></div>', unsafe_allow_html=True)
 
     if files:
 
@@ -145,12 +164,9 @@ if page == "Dashboard":
 
 elif page == "Scan Files":
 
-    st.subheader("🔍 Scan a Folder")
-
-    st.write(
-        "Collect file names, paths, extensions, sizes "
-        "and modification times."
-    )
+    st.markdown('<div class="sfm-section-kicker">INGESTION</div>', unsafe_allow_html=True)
+    st.subheader("Scan files")
+    st.markdown('<div class="sfm-muted-copy">Collect file names, paths, extensions, sizes, and modification times from a local folder.</div>', unsafe_allow_html=True)
 
     folder_path = st.text_input(
         "Enter folder path",
@@ -187,7 +203,7 @@ elif page == "Scan Files":
         )
 
         st.download_button(
-            "Download Scan Results as CSV",
+            "⬇️ Download Scan Results as CSV",
             df.to_csv(index=False).encode("utf-8"),
             file_name="scan_results.csv",
             mime="text/csv"
@@ -202,7 +218,7 @@ elif page == "Scan Files":
             key="scan_db_password"
         )
 
-        if st.button("Save Files to Database"):
+        if st.button("💾 Save Files to Database"):
 
             if not password:
 
@@ -236,9 +252,9 @@ elif page == "Scan Files":
 
 elif page == "Database Records":
 
-    st.subheader("🗄️ Database Records")
-
-    st.write("View file metadata stored in PostgreSQL.")
+    st.markdown('<div class="sfm-section-kicker">POSTGRESQL</div>', unsafe_allow_html=True)
+    st.subheader("Database records")
+    st.markdown('<div class="sfm-muted-copy">Load and search file metadata already stored in PostgreSQL.</div>', unsafe_allow_html=True)
 
     password = st.text_input(
         "PostgreSQL password",
@@ -246,7 +262,7 @@ elif page == "Database Records":
         key="database_password"
     )
 
-    if st.button("Load Database Records"):
+    if st.button("📂 Load Database Records"):
 
         if not password:
 
@@ -275,11 +291,11 @@ elif page == "Database Records":
 
         col1, col2 = st.columns(2)
 
-        col1.metric("Total Records", len(df))
+        col1.metric("📋 Total Records", len(df))
 
         total_storage = df["file_size"].sum() / (1024 * 1024)
 
-        col2.metric("Total Storage", f"{total_storage:.2f} MB")
+        col2.metric("💾 Total Storage", f"{total_storage:.2f} MB")
 
         st.divider()
 
@@ -325,7 +341,8 @@ elif page == "Database Records":
 
 elif page == "About":
 
-    st.subheader("About This Project")
+    st.markdown('<div class="sfm-section-kicker">PROJECT DETAILS</div>', unsafe_allow_html=True)
+    st.subheader("About Smart File Manager")
 
     st.write(
         "Smart File Manager is an academic project combining "
