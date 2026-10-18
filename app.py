@@ -51,11 +51,12 @@ with st.sidebar:
         "Dashboard": "01   Overview",
         "Scan Files": "02   Scan files",
         "Database Records": "03   Database records",
-        "About": "04   About project",
+        "Smart Recommendations": "04   Smart recommendations",
+        "About": "05   About project",
     }
     page = st.radio(
         "Navigation",
-        ["Dashboard", "Scan Files", "Database Records", "About"],
+        ["Dashboard", "Scan Files", "Database Records", "Smart Recommendations", "About"],
         format_func=lambda item: page_labels[item],
         label_visibility="collapsed",
         key="main_navigation",
@@ -336,6 +337,185 @@ elif page == "Database Records":
 
 
 # --------------------------------------------------
+# SMART RECOMMENDATIONS (AMAN MODULES)
+# --------------------------------------------------
+
+elif page == "Smart Recommendations":
+
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from modules.aman.file_classifier import classify_file
+    from modules.aman.duplicate_detector import find_duplicates
+    from modules.aman.recommendation_service import generate_recommendation
+    from modules.udit.drive_monitor import get_drive_info
+
+    st.markdown('<div class="sfm-section-kicker">FILE INTELLIGENCE</div>', unsafe_allow_html=True)
+    st.subheader("Smart Recommendations")
+    st.markdown(
+        '<div class="sfm-muted-copy">Review file activity, detect identical file contents, and get storage suggestions. This page never moves or deletes files.</div>',
+        unsafe_allow_html=True,
+    )
+
+    default_scan_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+    if not os.path.isdir(default_scan_folder):
+        default_scan_folder = os.path.expanduser("~")
+
+    recommendation_folder = st.text_input(
+        "Folder to analyze",
+        value=default_scan_folder,
+        key="recommendation_folder",
+    )
+    scan_for_recommendations = st.button("Scan folder for recommendations", type="primary")
+
+    if scan_for_recommendations:
+        if not os.path.isdir(recommendation_folder):
+            st.error("That folder does not exist or is not accessible. Choose a folder on this computer.")
+        else:
+            with st.spinner("Scanning folder metadata..."):
+                recommendation_files = scan_folder(recommendation_folder)
+            st.session_state["recommendation_files"] = recommendation_files
+            st.success(f"Scanned {len(recommendation_files)} files. No files were changed.")
+
+    recommendation_files = st.session_state.get("recommendation_files", [])
+
+    if recommendation_files:
+        # Use the currently detected drives as candidate destinations. The
+        # recommendation engine is advisory and never performs file operations.
+        try:
+            detected_drives = get_drive_info()
+        except Exception as error:
+            detected_drives = []
+            st.warning(f"Could not inspect available drives: {error}")
+
+        destinations = [
+            {
+                "name": drive.get("mount_point", "Unknown drive"),
+                "total_capacity": int(drive.get("total_bytes", 0)),
+                "used_capacity": int(drive.get("used_bytes", 0)),
+            }
+            for drive in detected_drives
+            if drive.get("total_bytes") and drive.get("used_bytes") is not None
+        ]
+
+        if not destinations:
+            st.warning("No usable storage destinations were detected. File classification and duplicate detection can still run.")
+
+        recommendation_rows = []
+        classification_counts = {"Active": 0, "Inactive": 0, "Archive": 0, "Unknown": 0}
+        for item in recommendation_files:
+            path = item.get("file_path", "")
+            # Do not recommend the same drive as a migration destination.
+            # Keep only other detected mount points for this file.
+            source_normalized = os.path.normcase(os.path.abspath(path))
+            candidate_destinations = []
+            for drive in destinations:
+                mount = drive.get("name", "")
+                try:
+                    mount_normalized = os.path.normcase(os.path.abspath(mount))
+                    common = os.path.normcase(os.path.commonpath([source_normalized, mount_normalized]))
+                    is_source_drive = common == mount_normalized
+                except (ValueError, OSError):
+                    is_source_drive = False
+                if not is_source_drive:
+                    candidate_destinations.append(drive)
+
+            modified_at = item.get("last_modified")
+            if modified_at is not None and modified_at.tzinfo is None:
+                # scan_folder returns local naive timestamps; attach the local
+                # timezone before converting to UTC for Aman's timezone-aware API.
+                modified_at = modified_at.astimezone().astimezone(timezone.utc)
+
+            try:
+                stat_result = os.stat(path)
+                last_accessed = datetime.fromtimestamp(stat_result.st_atime, timezone.utc)
+            except OSError:
+                last_accessed = None
+
+            try:
+                recommendation = generate_recommendation(
+                    file_path=path,
+                    file_size=int(item.get("file_size", 0)),
+                    destinations=candidate_destinations,
+                    last_accessed=last_accessed,
+                    modified_at=modified_at,
+                    file_extension=item.get("file_extension") or "",
+                )
+                classification = recommendation["classification"]
+                category = classification.get("category", "Unknown")
+                classification_counts[category] = classification_counts.get(category, 0) + 1
+                allocation = recommendation.get("allocation", {})
+                recommendation_rows.append({
+                    "File name": item.get("file_name", Path(path).name),
+                    "Category": category,
+                    "Suggested action": recommendation.get("suggested_action"),
+                    "Priority": recommendation.get("priority"),
+                    "Suggested destination": allocation.get("destination") or "—",
+                    "Status": recommendation.get("status", "PENDING"),
+                    "Reason": recommendation.get("reason", ""),
+                    "Path": path,
+                })
+            except (ValueError, TypeError, OSError) as error:
+                recommendation_rows.append({
+                    "File name": item.get("file_name", Path(path).name),
+                    "Category": "Unknown",
+                    "Suggested action": "MANUAL_REVIEW",
+                    "Priority": "LOW",
+                    "Suggested destination": "—",
+                    "Status": "PENDING",
+                    "Reason": f"Could not generate recommendation: {error}",
+                    "Path": path,
+                })
+
+        st.markdown("#### Activity classification")
+        metric_cols = st.columns(4)
+        for column, category in zip(metric_cols, ("Active", "Inactive", "Archive", "Unknown")):
+            column.metric(category, classification_counts.get(category, 0))
+
+        recommendation_df = pd.DataFrame(recommendation_rows)
+        st.markdown("#### Recommendations")
+        st.dataframe(recommendation_df, width="stretch", hide_index=True)
+        st.download_button(
+            "Download recommendations as CSV",
+            recommendation_df.to_csv(index=False).encode("utf-8"),
+            file_name="smart_file_recommendations.csv",
+            mime="text/csv",
+        )
+
+        st.markdown("#### Duplicate detection")
+        with st.spinner("Comparing file contents using SHA-256..."):
+            duplicate_result = find_duplicates([item.get("file_path", "") for item in recommendation_files])
+        duplicate_groups = duplicate_result.get("duplicates", [])
+        if duplicate_groups:
+            duplicate_rows = []
+            for group_number, group in enumerate(duplicate_groups, start=1):
+                for duplicate_path in group.get("paths", []):
+                    duplicate_rows.append({
+                        "Duplicate group": group_number,
+                        "Size (bytes)": group.get("size_bytes", 0),
+                        "SHA-256": group.get("hash", ""),
+                        "File path": duplicate_path,
+                    })
+            st.warning(f"Found {len(duplicate_groups)} duplicate group(s). Review before taking any action.")
+            st.dataframe(pd.DataFrame(duplicate_rows), width="stretch", hide_index=True)
+            st.download_button(
+                "Download duplicate report as CSV",
+                pd.DataFrame(duplicate_rows).to_csv(index=False).encode("utf-8"),
+                file_name="duplicate_report.csv",
+                mime="text/csv",
+            )
+        else:
+            st.success("No duplicate file contents were found in this scan.")
+
+        if duplicate_result.get("errors"):
+            with st.expander(f"Files that could not be checked ({len(duplicate_result['errors'])})"):
+                st.dataframe(pd.DataFrame(duplicate_result["errors"]), width="stretch", hide_index=True)
+
+        st.caption("Safety: recommendations are advisory only. This page does not move, rename, archive, or delete files and does not write recommendations to PostgreSQL yet.")
+    else:
+        st.info("Choose a folder and select 'Scan folder for recommendations' to start. Use a small test folder first.")
+
+
+# --------------------------------------------------
 # ABOUT
 # --------------------------------------------------
 
@@ -363,7 +543,13 @@ elif page == "About":
 
     - Drive monitoring
     - File classification
-    - Duplicate detection
     - Safe file movement
-    - Storage recommendations
+    - PostgreSQL recommendation persistence
+
+    **Integrated advisory features**
+
+    - Active, inactive, archive, and unknown classification
+    - SHA-256 duplicate detection
+    - Storage destination recommendations
+    - CSV reports for recommendations and duplicates
     """)
